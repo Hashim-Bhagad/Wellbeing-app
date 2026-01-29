@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+motor
+pydantic
+pydantic-settings
+python-multipart
+python-jose[cryptography]
+bcrypt==3.2.2
+passlib[bcrypt]
+pymupdf
+google-generativeai
+python-dotenv
+apscheduler
+email-validator
