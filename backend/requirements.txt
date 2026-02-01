@@ -8,7 +8,7 @@ python-jose[cryptography]
 bcrypt==3.2.2
 passlib[bcrypt]
 pymupdf
-google-generativeai
+google-genai
 python-dotenv
 apscheduler
 email-validator

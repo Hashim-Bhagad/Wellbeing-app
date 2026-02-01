@@ -5,7 +5,7 @@ class BMICreate(BaseModel):
     height_cm: float
     weight_kg: float
 
-class BMIRecordInDB(BaseModel):
+class BMIRecord(BaseModel):
     user_id: str
     height_cm: float
     weight_kg: float

@@ -1,74 +1,137 @@
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import json
 from app.core.config import get_settings
-from app.models.report import GeminiAnalysis
+from app.models.report import GeminiAnalysis, ExtractedData
 
 settings = get_settings()
 
-# Configure Gemini
-genai.configure(api_key=settings.GEMINI_API_KEY)
-model = genai.GenerativeModel("models/text-bison-001")
+# Initialize Gemini Client
+client = genai.Client(api_key=settings.GEMINI_API_KEY)
+model_id = "models/gemini-flash-latest" # Stable alias for Gemini 1.5 Flash
 
 
-async def analyze_health_report(extracted_text: str, extracted_data: dict) -> dict:
+async def analyze_health_report(extracted_text: str = None, pdf_bytes: bytes = None) -> dict:
     """
-    Analyzes health report text using Gemini API and returns a structured JSON response.
-    """
-    
-    prompt = f"""
-    You are a health advisor analyzing a patient's lab report.
-    
-    Extracted Data:
-    {json.dumps(extracted_data, indent=2)}
-    
-    Full Report Text (Context):
-    {extracted_text[:5000]}  # Truncate to avoid token limits if necessary, though 1.5 has large context
-    
-    Normal Ranges (Indian standards):
-    - Hemoglobin: 13-17 g/dL (men), 12-15 g/dL (women)
-    - Blood Sugar (Fasting): 70-100 mg/dL
-    - Total Cholesterol: < 200 mg/dL
-    - Vitamin D: 30-100 ng/mL
-    
-    Tasks:
-    1. Identify parameters outside normal range
-    2. Assess overall health status
-    3. Provide dietary recommendations using common Indian foods
-    4. Suggest lifestyle modifications
-    5. Indicate if doctor consultation is recommended
-    
-    Respond in STRICT JSON format matching this schema:
-    {{
-        "summary": "brief overview",
-        "abnormal_parameters": ["param1", "param2"],
-        "dietary_suggestions": ["suggestion1", "suggestion2"],
-        "foods_to_include": ["food1", "food2"],
-        "foods_to_avoid": ["food1", "food2"],
-        "lifestyle_tips": ["tip1", "tip2"],
-        "doctor_consultation": true/false
-    }}
-    
-    IMPORTANT: Return ONLY the JSON string. Do not use markdown formatting like ```json or ```.
+    Analyzes health report using Gemini API.
+    Can accept extracted text OR raw PDF bytes for native visual analysis.
     """
     
-    response = model.generate_content(prompt)
-    response_text = response.text
+    # Base prompt focusing on medical logic
+    base_prompt = """
+    You are a professional health advisor. Analyze the following medical lab report.
     
-    # robustly extract JSON from the response
-    import re
-    # Look for the first opening brace and the last closing brace
-    json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-    
-    if json_match:
-        json_str = json_match.group(0)
+    TASKS:
+    1. EXTRACT DATA: Find all health parameters (like Hemoglobin, Sugar, Cholesterol, etc.). 
+       For each parameter, extract:
+       - The actual numerical value (as a floating point number).
+       - The unit of measurement.
+       - The reference range provided (if any).
+    2. ANALYZE: First, look for the 'Reference Range' or 'Normal Range' provided within the report document itself. Use those values for analysis. If the report doesn't provide a range, use standard Indian medical ranges:
+       - Hemoglobin: 13-17 g/dL (men), 12-15 g/dL (women)
+       - Blood Sugar (Fasting): 70-100 mg/dL
+       - Total Cholesterol: < 200 mg/dL
+       - Vitamin D: 30-100 ng/mL
+       - (Fallback: For any other parameter, use your internal medical knowledge of standard healthy ranges).
+    3. RECOMMEND: Provide dietary and lifestyle advice based on the results.
+
+    OUTPUT FORMAT:
+    You MUST return a JSON object with this EXACT structure:
+    {
+        "extracted_data": {
+            "parameter_name": {
+                "value": 12.5,
+                "unit": "g/dL",
+                "reference_range": "13-17"
+            },
+            ...
+        },
+        "analysis": {
+            "summary": "brief overview of health status",
+            "health_score": 85, 
+            "abnormal_parameters": ["param1", "param2"],
+            "dietary_suggestions": ["suggestion1", "suggestion2"],
+            "foods_to_include": ["food1", "food2"],
+            "foods_to_avoid": ["food1", "food2"],
+            "lifestyle_tips": ["tip1", "tip2"],
+            "doctor_consultation": true/false
+        }
+    }
+    """
+
+    if pdf_bytes:
+        # Use native PDF processing for better layout/table understanding
+        contents = [
+            base_prompt,
+            types.Part.from_bytes(data=pdf_bytes, mime_type='application/pdf')
+        ]
     else:
-        # If no braces found, use the whole text (likely will fail JSON load if not valid)
-        json_str = response_text
-        
-    data = json.loads(json_str)
+        # Fallback to text if no bytes provided
+        contents = f"{base_prompt}\n\nREPORT TEXT:\n{extracted_text}"
     
-    # Return dict as requested, Pydantic upstream should handle it if needed, or if modifying signature
-    return data
+    try:
+        response = client.models.generate_content(
+            model=model_id,
+            contents=contents,
+            config={
+                'response_mime_type': 'application/json',
+            }
+        )
+    except Exception as e:
+        print(f"Gemini API Call failed: {e}")
+        return {
+            "extracted_data": {},
+            "analysis": {
+                "summary": "Error: AI analysis service is currently unavailable.",
+                "health_score": 0,
+                "abnormal_parameters": [],
+                "dietary_suggestions": [],
+                "foods_to_include": [],
+                "foods_to_avoid": [],
+                "lifestyle_tips": [],
+                "doctor_consultation": True
+            }
+        }
+    
+    # The new SDK with response_mime_type returns valid JSON in response.text
+    try:
+        data = json.loads(response.text)
+        
+        # Validate the analysis part using our Pydantic model
+        if "analysis" in data:
+            print("Validating analysis with GeminiAnalysis model...")
+            # This ensures the AI output matches our expected schema for storage
+            data["analysis"] = GeminiAnalysis(**data["analysis"]).dict()
+            print("Analysis validation successful.")
+            
+        if "extracted_data" in data:
+            print("Validating extracted_data...")
+            # Ensure it's a dict
+            if not isinstance(data["extracted_data"], dict):
+                print(f"Warning: extracted_data is not a dict, it is {type(data['extracted_data'])}")
+                data["extracted_data"] = {}
+            else:
+                # Use our model to ensure consistency
+                validated_data = ExtractedData(data=data["extracted_data"])
+                data["extracted_data"] = validated_data.dict().get("data", {})
+                print("Extracted data validation successful.")
+        return data
+    except Exception as e:
+        print(f"Error parsing/validating Gemini response: {e}")
+        # Fallback to a valid structure that matches GeminiAnalysis model
+        return {
+            "extracted_data": {},
+            "analysis": {
+                "summary": "Error analyzing report content. The AI output was not in the expected format.",
+                "health_score": 0,
+                "abnormal_parameters": [],
+                "dietary_suggestions": [],
+                "foods_to_include": [],
+                "foods_to_avoid": [],
+                "lifestyle_tips": [],
+                "doctor_consultation": True
+            }
+        }
 
-print("Gemini key loaded:", bool(os.getenv("GEMINI_API_KEY")))
+print("Gemini key loaded:", bool(settings.GEMINI_API_KEY))

@@ -3,14 +3,63 @@ from typing import List
 from app.core.database import get_database
 from app.routes.auth import get_current_user
 from app.models.report import ReportResponse, ReportInDB, ExtractedData
-from app.services.pdf_service import extract_text_from_pdf, parse_health_parameters
+from app.services.pdf_service import extract_text_from_pdf
 from app.services.gemini_service import analyze_health_report
 from bson import ObjectId
 import shutil
 import os
+import re
 from datetime import datetime, timedelta
 
 router = APIRouter()
+
+@router.get("/trends")
+async def get_health_trends(
+    current_user: dict = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    reports_cursor = db.reports.find({"user_id": str(current_user["_id"])}).sort("upload_date", 1)
+    reports = await reports_cursor.to_list(length=100)
+    
+    trends = {}
+    
+    for report in reports:
+        date = report.get("upload_date").isoformat()
+        data = report.get("extracted_data", {})
+        
+        for param, val in data.items():
+            # Standardize parameter name (lowercase and strip)
+            param_key = param.strip()
+            
+            num_val = None
+            unit = ""
+            
+            if isinstance(val, dict):
+                num_val = val.get("value")
+                unit = val.get("unit", "")
+            elif isinstance(val, str):
+                # Legacy support: extract number from string "14.5 g/dL"
+                match = re.search(r"(\d+\.?\d*)", val)
+                if match:
+                    num_val = float(match.group(1))
+                    unit = val.replace(match.group(1), "").strip()
+            
+            if num_val is not None:
+                if param_key not in trends:
+                    trends[param_key] = {
+                        "unit": unit,
+                        "data": []
+                    }
+                trends[param_key]["data"].append({
+                    "date": date,
+                    "value": num_val
+                })
+                
+    # Sort data points by date just in case
+    for param in trends:
+        trends[param]["data"].sort(key=lambda x: x["date"])
+        
+    return trends
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -27,30 +76,38 @@ async def upload_report(
     with open(file_path, "wb") as buffer:
         content = await file.read()
         buffer.write(content)
+    print(f"File saved to {file_path}")
         
     # Extract Text
+    print("Extracting text from PDF...")
     text = await extract_text_from_pdf(content)
+    print(f"Extracted {len(text)} characters.")
     if not text.strip():
+        print("Text extraction failed or returned empty string.")
         raise HTTPException(status_code=400, detail="Could not extract text from the uploaded PDF. Please ensure it is a valid text-based PDF report.")
     
-    # Parse basic params locally
-    parsed_data_dict = await parse_health_parameters(text)
+    # Analyze with Gemini (pass bytes for native visual/layout analysis)
+    print("Calling Gemini for native PDF analysis...")
+    gemini_result = await analyze_health_report(pdf_bytes=content)
+    print("Gemini analysis complete.")
     
-    # Analyze with Gemini
-    # Note: For strict 2-day timeline, we do this synchronously here or strictly await it.
-    # ideally this should be a background task, but user wants immediate results in the flow described.
-    gemini_analysis = await analyze_health_report(text, parsed_data_dict)
+    print("Preparing report for DB...")
+    try:
+        report_in_db = ReportInDB(
+            user_id=str(current_user["_id"]),
+            extracted_data=gemini_result.get("extracted_data", {}),
+            gemini_analysis=gemini_result.get("analysis"),
+            pdf_path=file_path,
+            upload_date=datetime.utcnow()
+        )
+    except Exception as e:
+        print(f"FAILED to create ReportInDB model: {e}")
+        raise HTTPException(status_code=500, detail=f"Data validation error: {str(e)}")
     
-    report_in_db = ReportInDB(
-        user_id=str(current_user["_id"]),
-        extracted_data=parsed_data_dict,
-        gemini_analysis=gemini_analysis,
-        pdf_path=file_path,
-        upload_date=datetime.utcnow()
-    )
-    
+    print("Inserting into MongoDB...")
     new_report = await db.reports.insert_one(report_in_db.dict(by_alias=True, exclude={"id"}))
     created_report = await db.reports.find_one({"_id": new_report.inserted_id})
+    print("Report saved to DB.")
     
     # Update user's last report date and next checkup
     next_checkup = datetime.utcnow() + timedelta(days=90)

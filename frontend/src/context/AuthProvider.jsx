@@ -1,7 +1,6 @@
-import React, { createContext, useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect } from 'react';
 import authService from '../services/auth';
-
-const AuthContext = createContext(null);
+import { AuthContext } from './AuthContext';
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
@@ -16,6 +15,7 @@ export const AuthProvider = ({ children }) => {
                     setUser(userData);
                 } catch (error) {
                     localStorage.removeItem('token');
+                    console.log(error);
                 }
             }
             setLoading(false);
@@ -51,5 +51,3 @@ export const AuthProvider = ({ children }) => {
         </AuthContext.Provider>
     );
 };
-
-export const useAuth = () => useContext(AuthContext);

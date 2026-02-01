@@ -7,21 +7,12 @@ class ReportBase(BaseModel):
     report_type: str = "General Health"
 
 class ExtractedData(BaseModel):
-    hemoglobin: Optional[float] = None
-    blood_sugar_fasting: Optional[float] = None
-    blood_sugar_pp: Optional[float] = None
-    total_cholesterol: Optional[float] = None
-    hdl: Optional[float] = None
-    ldl: Optional[float] = None
-    triglycerides: Optional[float] = None
-    vitamin_d: Optional[float] = None
-    vitamin_b12: Optional[float] = None
-    tsh: Optional[float] = None
-    # Flexible field for other parameters
-    other_parameters: Optional[Dict[str, Any]] = None
+    # Dynamic field mapping for better validation and storage
+    data: Dict[str, Any] = Field(default_factory=dict)
 
 class GeminiAnalysis(BaseModel):
     summary: str
+    health_score: int # Score out of 100
     abnormal_parameters: List[str]
     dietary_suggestions: List[str]
     foods_to_include: List[str]
@@ -29,8 +20,6 @@ class GeminiAnalysis(BaseModel):
     lifestyle_tips: List[str]
     doctor_consultation: bool
 
-class ReportCreate(ReportBase):
-    pass
 
 class ReportInDB(ReportBase):
     id: Optional[str] = Field(None, alias="_id")
