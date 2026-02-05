@@ -109,28 +109,31 @@ const Trends = () => {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-12">
                 <div>
                     <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-3">Health Analytics</h1>
-                    <div className="flex items-center gap-4">
-                        <p className="text-slate-500 font-medium">Chronological synthesis of clinical biomarkers.</p>
-                        <button 
-                            onClick={() => fetchTrends(true)}
-                            disabled={loading}
-                            className={`p-2 hover:bg-slate-100 rounded-lg transition-all border border-transparent hover:border-slate-200 group relative
-                                ${loading ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
-                            title="Refresh database records"
-                        >
-                            <Loader2 className={`h-4 w-4 text-slate-400 group-hover:text-indigo-600 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
-                        </button>
-                    </div>
+                    <p className="text-slate-500 font-medium">Chronological synthesis of clinical biomarkers.</p>
                 </div>
-                <div className="flex items-center gap-3 bg-white p-2 rounded-2xl shadow-sm border border-slate-50">
-                    <Filter className="h-4 w-4 text-slate-400 ml-2" />
-                    <select 
-                        className="bg-transparent font-black px-4 py-2 border-none focus:ring-0 text-indigo-600 text-sm outline-none cursor-pointer"
-                        value={selectedParam}
-                        onChange={(e) => setSelectedParam(e.target.value)}
+                <div className="flex items-center gap-4">
+                    <button 
+                        onClick={() => fetchTrends(true)}
+                        disabled={loading}
+                        className={`flex items-center gap-2 px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all border
+                            ${loading 
+                                ? 'bg-slate-50 border-slate-100 text-slate-400 cursor-not-allowed' 
+                                : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-600 hover:text-indigo-600 shadow-sm hover:shadow-md'}`}
                     >
-                        {params.map(p => <option key={p} value={p}>{p}</option>)}
-                    </select>
+                        <Loader2 className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                        {loading ? 'Synchronizing...' : 'Sync Data'}
+                    </button>
+                    
+                    <div className="flex items-center gap-3 bg-white p-2 rounded-2xl shadow-sm border border-slate-50">
+                        <Filter className="h-4 w-4 text-slate-400 ml-2" />
+                        <select 
+                            className="bg-transparent font-black px-4 py-2 border-none focus:ring-0 text-indigo-600 text-sm outline-none cursor-pointer"
+                            value={selectedParam}
+                            onChange={(e) => setSelectedParam(e.target.value)}
+                        >
+                            {params.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                    </div>
                 </div>
             </div>
 
